@@ -1,0 +1,483 @@
+
+if [ $# -eq 1 ] && [ $1 = "-help" ]; then
+        progname=$(basename $0)
+
+	echo "$progname -help                                     show this help"
+
+	echo "$progname -index                                    scans all available files to update index of directories that are marked for backup"
+	echo "$progname -grab           <BACKUP_DIR> <DEST_DIR>   copy a directory from backup to local"
+        echo "$progname -anchor         <BACKUP_DIR> <DEST_DIR>   mark a directory to be connected to another directory that lies in the backup"
+        echo "$progname -clear          <DIR>                     "
+        echo "$progname -scan           [DIR]                     scans the whole systems for affected directories"
+        echo "$progname -readanchor     <DIR>                     reads the ancor (the backup-destination) or returns empty"
+        echo "$progname -setmothership  <DIR>                     set the default backup-dir"
+        echo "$progname -showmothership <DIR>                     read the default backup-dir"
+        echo "$progname -checkindex                               checks if the index exists, if collisions occur, if all directories are existing"
+        echo "$progname -readindex                                shows the index"
+	echo "$progname -diff           <DIR>                     show diff"
+        echo "$progname -difftotal                                show diffs for the whole system (this uses the index)"
+	echo "$progname -push           <DIR>                     push the directory on local with backup"
+        echo "$progname -synctotal                                sync all market directories on the system with the backup (this uses teh index)"
+        echo "$progname -conflictsresolved                        if you had a conflict, and you resolved it, this is the command to recalculate the checksums"
+        echo "$progname -forcesuck <DIR>                          sets the content back to the backup"
+        echo "$progname -forcepush <DIR>                          replaces the backup with the state of the working copy"
+        echo "$progname -suck                                     fetch data from backup and update local"
+        echo "$progname -checkcansend                             prints a message in case we can not sync"
+        echo "$progname -checkcanreceive                          prints a message in case we can not suck"
+        echo "$progname -check                                    checks both directions at once"
+        echo "$progname -sizetotal                                prints size of all indexed directories" 
+        echo "$progname -size <DIR>                               prints size of directory" 
+        echo " "
+        echo "                                                    created by Philipp.dev@gmx.ch"
+	exit 0
+fi
+
+function checkValidDirectory {
+    backuproot=$(getBackupRoot)
+    if [ ! $backuproot ]; then
+        echo "no backup-dir found ... interrupt"
+    fi
+    if [ ! -f $(readlink -f  $1)/.destination_ai45f ]; then
+        echo "$(readlink -f  $1) is not under control of this script"
+    fi
+}
+
+function getBackupRoot {
+            if [ ! -f ~/.contact_mothership_mothership ] ; then
+                exit 0
+            fi
+            if [ ! -d $(cat ~/.contact_mothership_mothership) ] ; then
+                exit 0
+            fi
+                default_backup_root=$(cat ~/.contact_mothership_mothership)
+            echo $default_backup_root
+}
+
+function getDestinationContent {
+	cat $1/.destination_ai45f
+}
+
+function writeChecksumBackup {
+    backuproot=$(getBackupRoot)
+    backup=$backuproot$(getDestinationContent $1)
+    find $backup -type f -exec md5sum "{}" + | grep -v .destination_ai45f | grep -v .contactmothership_checksumthis | grep -v .contactmothership_checksumbackup | cut -d " " -f 1 > $2/.contactmothership_checksumbackup
+}
+
+function writeChecksumThis {
+    find $1 -type f -exec md5sum "{}" + | grep -v .destination_ai45f | grep -v .contactmothership_checksumthis | grep -v .contactmothership_checksumbackup | cut -d " " -f 1  > $2/.contactmothership_checksumthis
+}
+
+if [ $# -eq 2 ] && [ $1 = "-checkcanreceive" ]; then
+    tmpdir="/tmp/contactmothership$(uuid)"
+    mkdir $tmpdir
+    writeChecksumThis $(readlink -f $2) $tmpdir
+    diff=$(diff $tmpdir/.contactmothership_checksumthis $(readlink -f $2)/.contactmothership_checksumthis)
+    rm -r $tmpdir
+    if [ ! -z "$diff" ]; then
+        echo "Receiving data would override local manipulated stuff"
+    fi
+    exit 0
+fi
+
+if [ $# -eq 2 ] && [ $1 = "-forcesuck" ]; then
+    $0 -conflictsresolved $2
+    $0 -suck $2
+    exit 0
+fi
+
+if [ $# -eq 2 ] && [ $1 = "-forcepush" ]; then
+    $0 -conflictsresolved $2
+    $0 -push $2
+    exit 0
+fi
+
+if [ $# -eq 2 ] && [ $1 = "-check" ]; then
+  cansend="$($0 -checkcansend $2)"
+  canreceive="$($0 -checkcanreceive $2)"
+  if [ ! -z "$cansend" ] && [ ! -z "$canreceive" ]; then
+    echo "conflict"
+    exit 0
+  fi
+
+  if [ -z "$cansend" ] && [ -z "$canreceive" ]; then
+    exit 0
+  fi
+
+  if [ ! -z "$cansend" ]; then
+    echo "needssuck"
+    exit 0
+  fi
+  if [ ! -z "$canreceive" ]; then
+    echo "needspush"
+    exit 0
+  fi
+  exit 0
+fi
+
+if [ $# -eq 2 ] && [ $1 = "-checkcansend" ]; then
+    tmpdir="/tmp/contactmothership$(uuid)"
+    mkdir $tmpdir
+
+    writeChecksumBackup $2 $tmpdir
+    diff=$(diff $tmpdir/.contactmothership_checksumbackup $(readlink -f $2)/.contactmothership_checksumbackup)
+    rm -r $tmpdir
+    if [ ! -z "$diff" ]; then
+        echo "Sending data would override stuff on your backend"
+    fi
+    exit 0
+fi
+
+if [ $# -eq 2 ] && [ $1 = "-conflictsresolved" ]; then
+    checkValidDirectory=$(checkValidDirectory $2)
+    if [ ! -z "$checkValidDirectory" ]; then
+        echo $checkValidDirectory
+        exit 0
+    fi
+    writeChecksumThis $(readlink -f $2) $(readlink -f $2)
+    writeChecksumBackup $(readlink -f $2) $(readlink -f $2)
+    exit 0
+fi
+
+if [ $# -eq 2 ] && [ $1 = "-suck" ]; then
+    valid=$(checkValidDirectory $2)
+    if [ ! -z "$valid" ];then
+        echo $valid
+        exit 0ls /
+    fi
+    canreceive=$($0 -checkcanreceive $2)
+    if [ ! -z "$canreceive" ];then
+        echo $canreceive
+        exit 0
+    fi
+    backuproot=$(getBackupRoot)
+    backup_destfile=$(getDestinationContent $2)
+    rsync -r --delete-after "$backuproot$(getDestinationContent $2)/" "$2/"
+    
+    echo $backup_destfile>$2/.destination_ai45f
+    $0 -conflictsresolved $2
+    exit 0
+fi
+
+if [ $# -eq 2 ] && [ $1 = "-clear" ]; then
+    rm $2/.destination_ai45f
+    rm $2/.contactmothership_checksumthis
+    rm $2/.contactmothership_checksumbackup
+    exit 0
+fi
+
+if [ $# -eq 2 ] && [ $1 = "-readanchor" ]; then
+    if [ -e $2/.destination_ai45f ]; then
+        if [ -z $(cat $2/.destination_ai45f) ]; then
+            echo "<EMPTY BUT EXISTING>"
+            exit 2
+        else
+            cat $2/.destination_ai45f
+        fi
+    fi
+    exit 0
+fi
+
+
+if [ $# -eq 2 ] && [ $1 = "-status" ]; then
+    $0 -check $2
+    $0 -diff $2
+    exit 0
+fi
+
+if [ $# -eq 2 ] && [ $1 = "-diff" ]; then
+    backuproot=$(getBackupRoot)
+    if [ ! $backuproot ]; then
+        echo "no backup-dir found ... interrupt"
+        exit 0
+    fi
+    if [ $# -eq 2 ]; then
+        if [ -f $2/.destination_ai45f ]; then
+            diff -r -q $(readlink -f $2) $backuproot$(getDestinationContent $2) | grep -v .destination_ai45f | grep -v contactmothership_checksumbackup | grep -v contactmothership_checksumthis
+        else
+            echo "No destination-File found"
+        fi
+
+    else
+        echo "Illegal Argument, use $(basename $0) -help for more info"
+    fi
+    exit 0
+fi
+
+if  [ $# -eq 2 ] && [ $1 = "-sync" ]; then
+    backuproot=$(getBackupRoot)
+    check=$(checkValidDirectory $2)
+    if [ ! -z "$check" ]; then
+        echo $check
+        exit 0
+    fi
+    check=$($0 -check $(readlink -f $2))
+    if [ "$check" = "conflict" ]; then
+        echo "We have a conflict, please resolve it first"
+    elif [ "$check" = "needspush" ]; then
+        $0 -push $2
+    elif [ "$check" = "needssuck" ]; then
+        $0 -suck $2
+    fi
+ 
+    exit 0
+fi
+
+if  [ $# -eq 2 ] && [ $1 = "-push" ]; then
+    backuproot=$(getBackupRoot)
+    check=$(checkValidDirectory $2)
+    if [ ! -z "$check" ]; then
+        echo $check
+        exit 0
+    fi
+
+    cansend=$($0 -checkcansend $(readlink -f $2))
+    if [ -z "$cansend" ]; then
+	if [ -f $2/.destination_ai45f ]; then
+            if [ ! -d $backuproot$(getDestinationContent $2) ]; then
+                echo "The Backup-dir $backuproot$(getDestinationContent $2)  disapeared"
+                exit 0
+            fi
+                rsync -r --delete-after --exclude='.destination_ai45f' --exclude='.contactmothership_checksumthis' --exclude='.contactmothership_checksumbackup' "$2/" $backuproot$(getDestinationContent $2)
+            writeChecksumBackup $(readlink -f $2) $(readlink -f $2)
+            writeChecksumThis $(readlink -f $2) $(readlink -f $2)
+	else
+	    echo "No destination-File found"
+        fi
+    else
+        echo $cansend
+    fi
+    exit 0
+fi
+
+if [ $# -eq 1 ] && [ $1 = "-index" ]; then
+    if [ -f $HOME/.contact_mothership_index ]; then
+        rm $HOME/.contact_mothership_index 
+    fi
+    $0 -scan | tee $HOME/.contact_mothership_index_in_creation
+    mv $HOME/.contact_mothership_index_in_creation $HOME/.contact_mothership_index
+    exit 0
+fi
+
+if [ $# -eq 1 ] && [ $1 = "-readindex" ]; then
+   if [ -f ~/.contact_mothership_index ]; then
+       cat ~/.contact_mothership_index
+   fi
+   exit 0
+fi
+
+if [ $# -eq 3 ] && [ $1 = "-anchor" ]; then
+    backuproot=$(getBackupRoot)
+    if [ ! $backuproot ]; then
+        echo "no backup-dir found ... interrupt"
+        exit 0
+    fi
+
+    if [[ ! $(readlink -f $2) = "$backuproot"* ]]; then
+        echo you are not putting a anchor to your backup
+        exit 0
+    fi
+	if [ $# -eq 3 ]; then
+                if [ -e $3/.destination_ai45f ]; then
+                    echo "carefull, the choosen directory is already anchored at $(cat $3/.destination_ai45f)"
+                    echo "interupt or continue"
+                    read gaga
+                fi
+                if [ -e $2 ]; then
+                    echo "carefull, the directory on backup already exists"
+                else
+			if [ $(mkdir $2) ] ; then
+				echo "interupting"
+				exit 0
+			fi
+                        echo "A new directory was created at $2"
+		fi
+		absolute_backup_path=$2
+		absolute_backup_root=$backuproot
+		relative_path=${absolute_backup_path#$absolute_backup_root}
+		echo "$relative_path/" > "$3"/.destination_ai45f
+                if [ -f ~/.contact_mothership_index ]; then
+                    echo $(readlink -f $3) >> ~/.contact_mothership_index
+                fi
+                $0 -conflictsresolved $3
+	else
+		echo "Illegal Argument, use $(basename $0) -help for more info"
+	fi
+	exit 0
+fi
+
+if [ $# -eq 3 ] && [ $1 = "-grab" ]; then
+    backuproot=$(getBackupRoot)
+    if [ ! $backuproot ]; then
+        echo "no backup-dir found ... interrupt"
+        exit 0
+    fi
+    if [[ ! $(readlink -f $2) = "$backuproot"* ]]; then
+        echo your not grabbing from your backup
+        exit 0
+    fi
+	if [ $# -eq 3 ] ; then
+		cp -r $2 $3
+		absolute_backup_path=$(readlink -f $2)
+		absolute_backup_root=$backuproot
+		relative_path=${absolute_backup_path#$absolute_backup_root}
+		echo "$relative_path/" > "$3"/$(basename $2)/.destination_ai45f
+                if [ -f ~/.contact_mothership_index ]; then
+                    echo $(readlink -f $3)/$(basename $2) >> ~/.contact_mothership_index
+                fi
+                writeChecksumBackup "$3"/$(basename $2) "$3"/$(basename $2)
+                writeChecksumThis "$3"/$(basename $2) "$3"/$(basename $2)
+	else
+		echo "Illegal Argument, use $(basename $0) -help for more info"
+	fi
+    exit 0
+fi
+
+if [ $# -ge 1 ] && [ $1 = "-scan" ]; then
+	if [ $# -eq 2 ]; then
+		scan_here=$2
+	else
+		scan_here=/
+	fi
+	for i in $(find $scan_here -name .destination_ai45f 2>/dev/null)
+	do
+		dirname $i
+        done
+        exit 0
+fi
+
+if [ $# -eq 1 ] && [ $1 = "-checkindex" ]; then
+    if [ ! -f $HOME/.contact_mothership_index ]; then
+       echo "There is no index"
+    else
+        for i in $(cat $HOME/.contact_mothership_index)
+        do
+           if [ ! -d $i ]; then
+              echo "your index seems to be out of date, $i is missing"
+           else
+              if [ ! -f $i/.destination_ai45f ]; then
+                  echo "$i exists but is not anchored"
+              fi
+           fi
+        done
+    
+        for source in $(cat ~/.contact_mothership_index)
+        do
+            if [ ! -z $(echo $source | grep $($0 -showmothership)) ]; then
+                echo "We found some anchored directorie in the backup ... this is illegal ($source)"
+            fi
+                for source02 in $(cat ~/.contact_mothership_index)
+                    do
+                    source01string="<BACKUPHEAD>$($0 -readanchor $source)"
+                    source02string="<BACKUPHEAD>$($0 -readanchor $source02)"
+                    if [ ! $source02 = $source ] && [ ! -z "$( echo $source01string | grep $source02string)" ]; then
+                        echo "$source and $source02 are in conflict ... collision, interrupting"
+                        echo "        $source01string"
+                        echo "        $source02string"
+                    fi
+                done
+            done
+    fi
+    exit 0
+fi
+
+if [ $# -eq 1 ] && [ $1 = "-statustotal" ]; then
+    tmp=$($0 -checkindex)
+       if [ ! -z "$tmp" ]; then
+           echo "Warning"
+           echo $tmp
+           echo "press key to continue"
+           read a
+           echo " "
+       fi
+   for i in $(cat $HOME/.contact_mothership_index)
+   do
+        echo "$i ..."
+        $0 -status $i
+        echo " "
+   done
+   echo "fin"
+   exit 0
+fi
+
+if [ $# -eq 1 ] && [ $1 = "-difftotal" ]; then
+    tmp=$($0 -checkindex)
+       if [ ! -z "$tmp" ]; then
+           echo "Warning"
+           echo $tmp
+           echo "press key to continue"
+           read a
+           echo " "
+       fi
+   for i in $(cat $HOME/.contact_mothership_index)
+   do
+        echo "$i ..."
+        $0 -diff "$i"
+        echo " "
+   done
+   echo "fin"
+   exit 0
+fi
+
+if [ $# -eq 1 ] && [ $1 = "-synctotal" ]; then
+    tmp=$($0 -checkindex)
+    if [ ! -z "$tmp" ]; then
+        echo $tmp
+        exit 1
+    fi
+
+      for i in $(cat $HOME/.contact_mothership_index)
+      do
+           $0 -sync "$i"
+      done
+      echo "fin"
+      exit 0
+   fi
+
+if [ $# -eq 1 ] && [ $1 = "-checktotal" ]; then
+      for i in $(cat $HOME/.contact_mothership_index)
+      do
+           echo $i ...
+           $0 -check "$i"
+           echo " "
+      done
+      echo "fin"
+      exit 0
+   fi
+
+
+if [ $# -eq 1 ] && [ $1 = "-showmothership" ]; then
+   if [ -f ~/.contact_mothership_mothership ]; then
+       cat ~/.contact_mothership_mothership
+   else
+       echo "no default backupdir set"
+   fi
+   exit 0
+fi
+
+if [ $# -eq 2 ] && [ $1 = "-size" ]; then
+  du -h -s $2
+  exit 0
+fi
+
+if [ $# -eq 1 ] && [ $1 = "-sizetotal" ]; then
+    for file in $($0 -readindex)
+    do
+        $0 -size $file
+    done
+    exit 
+fi
+
+
+if [ $# -eq 2 ] && [ $1 = "-setmothership" ]; then
+   if [ -d $2 ]; then
+       echo "$(readlink -f $2)/" > ~/.contact_mothership_mothership
+   else
+       echo "the dir you specified does not exist"
+   fi
+   exit 0
+fi
+
+echo "Illegal Argument, use $(basename $0) -help for more info"
+
+		
+
